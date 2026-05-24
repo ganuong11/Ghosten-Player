@@ -38,9 +38,9 @@ jobs:
       - name: Download Libraries
         uses: actions/download-artifact@v4
         with:
-          github-token: ${{ secrets.TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ vars.MEDIA3_RUN_ID }}
-          repository: GhostenEditor/Ghosten-Player
+          repository: ganuong11/Ghosten-Player
 
       - name: Move Libraries
         run: |
