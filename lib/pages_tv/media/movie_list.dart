@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../components/no_data.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/models.dart';
+import '../../utils/jellyfin_utils.dart';
 import '../../utils/utils.dart';
 import '../components/filled_button.dart';
 import '../components/future_builder_handler.dart';
@@ -12,6 +13,9 @@ import '../media/components/carousel.dart';
 import '../settings/settings_library.dart';
 import '../utils/player.dart';
 import '../utils/utils.dart';
+import 'components/folder_badge.dart';
+import 'components/folder_breadcrumb.dart';
+import 'components/jellyfin_folder_grid_channel.dart';
 import 'components/media_grid_item.dart';
 import 'mixins/channel.dart';
 
@@ -31,10 +35,16 @@ class _MovieListPageState extends State<MovieListPage> {
   final _scrollController = ScrollController();
   late final halfHeight = MediaQuery.of(context).size.height / 2;
 
+  List<({String id, String name})> _breadcrumbPaths = [];
+  int? _currentDriverId;
+  String? _currentParentId;
+  bool _isBrowsingFolders = false;
+
   @override
   void initState() {
     _scrollController.addListener(_scrollListener);
     super.initState();
+    _checkJellyfinLibraries();
   }
 
   @override
@@ -44,6 +54,18 @@ class _MovieListPageState extends State<MovieListPage> {
     _scrollController.removeListener(_scrollListener);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkJellyfinLibraries() async {
+    final libs = await JellyfinUtils.getJellyfinLibraries();
+    if (!mounted) return;
+    setState(() {
+      if (libs.isNotEmpty) {
+        _currentDriverId = libs.first.driverId;
+        _isBrowsingFolders = true;
+        _breadcrumbPaths = [];
+      }
+    });
   }
 
   @override
@@ -203,28 +225,99 @@ class _MovieListPageState extends State<MovieListPage> {
               height: 340,
               builder: (context, item) => _buildMediaItem(context, item, width: 160, height: 160 / 0.67),
             ),
-            MediaGridChannel(
-              label: AppLocalizations.of(context)!.tagAll,
-              onQuery:
-                  (index) => Api.movieQueryAll(
-                    MediaSearchQuery(
-                      limit: 30,
-                      offset: 30 * index,
-                      sort: const SortConfig(type: SortType.title, direction: SortDirection.asc),
-                    ),
-                  ),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 196,
-                childAspectRatio: 0.5,
-                mainAxisSpacing: 36,
-                mainAxisExtent: 300,
-              ),
-              itemBuilder: (context, item, index) => _buildMediaItem(context, item, width: 160, height: 160 / 0.67),
-            ),
+            _buildAllSection(),
           ],
         ),
       ],
     );
+  }
+
+  Widget _buildAllSection() {
+    if (_isBrowsingFolders && _currentDriverId != null) {
+      return SliverMainAxisGroup(
+        slivers: [
+          SliverToBoxAdapter(
+            child: FolderBreadcrumb(
+              paths: _breadcrumbPaths,
+              onPathTap: _onBreadcrumbTap,
+            ),
+          ),
+          JellyfinFolderGridChannel(
+            label: AppLocalizations.of(context)!.tagAll,
+            driverId: _currentDriverId!,
+            parentId: _currentParentId ?? '/',
+            onFolderTap: _onFolderTap,
+            onMovieTap: _onMediaTap,
+            itemBuilder: (context, file, movie) => _buildFolderItem(context, file, movie),
+          ),
+        ],
+      );
+    }
+
+    return MediaGridChannel(
+      label: AppLocalizations.of(context)!.tagAll,
+      onQuery:
+          (index) => Api.movieQueryAll(
+            MediaSearchQuery(
+              limit: 30,
+              offset: 30 * index,
+              sort: const SortConfig(type: SortType.title, direction: SortDirection.asc),
+            ),
+          ),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 196,
+        childAspectRatio: 0.5,
+        mainAxisSpacing: 36,
+        mainAxisExtent: 300,
+      ),
+      itemBuilder: (context, item, index) => _buildMediaItem(context, item, width: 160, height: 160 / 0.67),
+    );
+  }
+
+  Widget _buildFolderItem(BuildContext context, DriverFile file, Movie? movie) {
+    if (file.type == FileType.folder) {
+      return GestureDetector(
+        onTap: () => _onFolderTap(file.id, file.name),
+        child: Stack(
+          children: [
+            MediaGridItem(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              title: Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+            ),
+            const FolderBadge(),
+          ],
+        ),
+      );
+    }
+
+    if (movie != null) {
+      return _buildMediaItem(context, movie, width: 160, height: 160 / 0.67);
+    }
+
+    return MediaGridItem(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      title: Text(file.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+    );
+  }
+
+  void _onFolderTap(String folderId, String folderName) {
+    setState(() {
+      _breadcrumbPaths.add((id: folderId, name: folderName));
+      _currentParentId = folderId;
+    });
+  }
+
+  void _onBreadcrumbTap(String folderId) {
+    setState(() {
+      final index = _breadcrumbPaths.indexWhere((p) => p.id == folderId);
+      if (index >= 0) {
+        _breadcrumbPaths.removeRange(index + 1, _breadcrumbPaths.length);
+        _currentParentId = folderId == '/' ? null : folderId;
+      } else if (folderId == '/') {
+        _breadcrumbPaths.clear();
+        _currentParentId = null;
+      }
+    });
   }
 
   Widget _buildRecentMediaItem(BuildContext context, Movie item, {double? width, double? height}) {
